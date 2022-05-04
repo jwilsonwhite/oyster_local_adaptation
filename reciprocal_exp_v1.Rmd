@@ -1,0 +1,1150 @@
+---
+title: "reciprocal_exp_v1"
+author: "David Kimbro + Will White"
+date: "3/17/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This R Markdown document loads, analyzes, and plots all of the data and figures included in 
+"Evidence for local adaptation of oysters to a within-estuary gradient in predation pressure weakens with ontogeny" by D. Kimbro et al.
+
+Chunks are organized in the order of the presentation of figures in the manuscript.
+
+
+```{r}
+# Load necessary packages
+library(lme4) # upload package to use lmer function and glmer function
+library(car) #upload package to use Anova function for Analysis of Deviance
+library(tidyverse) #upload package for ggplot and dplyr 
+library(gridExtra) # for multi-panel figures
+library(multcomp) # for GLHT multiple comparisons
+library(scales) # for plotting dates, etc
+```
+
+Analysis of environmental data
+
+```{r}
+#####
+# ENVIRONMENTAL DATA --> Figure 2
+
+# Read in and format data, organizing into time periods during the experiment in order to calculate average conditions:
+sal <- read.csv("sal_temp.csv")
+sal$DateTime <- as.Date(sal$DateTime, format = "%m/%d/%Y")
+month1 <- sal%>%# 
+  filter(DateTime < "0019-09-27")%>%
+  group_by(Site)%>%
+  mutate(month = "one")
+  
+month3 <- sal%>%# 
+  filter(DateTime > "0019-09-27" & DateTime < "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "three")
+
+month9 <- sal%>%# 
+  filter(DateTime > "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "nine")
+
+all <- rbind(month1, month3, month9)
+all$dt <- as.Date(all$DateTime)
+
+all$month=factor(all$month, levels=c("one", "three", "nine"))
+levels(all$month)[levels(all$month)=="one"] <- "Aug-Sept"
+levels(all$month)[levels(all$month)=="three"] <- "Sept-Nov"
+levels(all$month)[levels(all$month)=="nine"] <- "Nov-May"
+
+all$reef=factor(all$Site, levels=c("butler", "pellicer"))
+levels(all$Site)[levels(all$Site)=="butler"] <- "Lower"
+levels(all$Site)[levels(all$Site)=="pellicer"] <- "Upper"
+
+# Summary statistics
+all <- all %>%
+  group_by(Site,month)%>%
+  mutate(mean.sal = mean(Salinity))%>%
+  mutate(sd.sal = sd(Salinity))%>%
+  mutate(mean.temp = mean(Temp))%>%
+  mutate(sd.temp = sd(Temp))
+
+# Figure panels are saved as a-f here but were later reordered in assembling the manuscript
+# Salinity panel:
+Fig2a <- ggplot(data=all,aes(x=dt,y=Salinity))+
+  geom_line(data=all[all$month=='Aug-Sept',],aes(y=mean.sal,color=Site,alpha=0.25))+
+  geom_ribbon(data=all[all$month=='Aug-Sept',],aes(x=dt,ymin=mean.sal-sd.sal,ymax=mean.sal+sd.sal,fill=Site,alpha=0.1))+
+  geom_line(data=all[all$month=='Nov-May',],aes(y=mean.sal,color=Site,alpha=0.25))+
+  geom_ribbon(data=all[all$month=='Nov-May',],aes(x=dt,ymin=mean.sal-sd.sal,ymax=mean.sal+sd.sal,fill=Site,alpha=0.1))+
+  geom_point(aes(color=Site),size=0.2)+
+  scale_color_manual(values=c("blue","red"))+
+  scale_fill_manual(values=c("blue","red"))+
+  ylab("Salinity") +
+  xlab("Time")+
+  scale_x_date(breaks='months',date_labels = "%b-%y")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+# Temperature panel
+Fig2b <- ggplot(data=all,aes(x=dt,y=Temp))+
+  geom_line(data=all[all$month=='Aug-Sept',],aes(y=mean.temp,color=Site,alpha=0.25))+
+  geom_ribbon(data=all[all$month=='Aug-Sept',],aes(x=dt,ymin=mean.temp-sd.temp,ymax=mean.temp+sd.temp,fill=Site,alpha=0.1))+
+  geom_line(data=all[all$month=='Nov-May',],aes(y=mean.temp,color=Site,alpha=0.25))+
+  geom_ribbon(data=all[all$month=='Nov-May',],aes(x=dt,ymin=mean.temp-sd.temp,ymax=mean.temp+sd.temp,fill=Site,alpha=0.1))+
+  geom_point(aes(color=Site),size=0.2)+
+  scale_color_manual(values=c("blue","red"))+
+  scale_fill_manual(values=c("blue","red"))+
+  ylab("Water temperature (ºC)") +
+  xlab("Time")+
+  scale_x_date(breaks='months',date_labels = "%b-%y")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+########
+
+######
+# Productivity (Chlorophyll a) 
+
+
+# load data:
+hydro <- read.csv("hydro2.csv")
+
+# processing data to organize by site & time period:
+hydro$DateTime <- as.Date(hydro$DateTime, format = "%m/%d/%Y")
+hydro.but <- hydro%>%# 
+  filter(DateTime > "0019-08-01" & Site == "butler")
+hydro.pel <-hydro %>%
+  filter(DateTime > "0019-08-01" & Site == "pellicer3")
+
+hydro.all = rbind(hydro.but, hydro.pel)
+  
+month1 <- hydro.all%>%# 
+  filter(DateTime < "0019-09-27")%>%
+  group_by(Site)%>%
+  mutate(month = "one")
+
+month3 <- hydro.all%>%# 
+  filter(DateTime > "0019-09-27" & DateTime < "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "three")
+
+month9 <- hydro.all%>%# 
+  filter(DateTime > "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "nine")
+
+hydro.months <- rbind(month1, month3, month9)
+
+hydro.months$month=factor(hydro.months$month, levels=c("one", "three", "nine"))
+levels(hydro.months$month)[levels(hydro.months$month)=="one"] <- "Aug-Sept"
+levels(hydro.months$month)[levels(hydro.months$month)=="three"] <- "Sept-Nov"
+levels(hydro.months$month)[levels(hydro.months$month)=="nine"] <- "Nov-May"
+
+hydro.months$Site=factor(hydro.months$Site, levels=c("butler", "pellicer3"))
+levels(hydro.months$Site)[levels(hydro.months$Site)=="butler"] <- "Lower"
+levels(hydro.months$Site)[levels(hydro.months$Site)=="pellicer3"] <- "Upper"
+
+# Summary statistics
+hydro.months <- hydro.months %>%
+  group_by(Site,month)%>%
+  mutate(mean.chla = mean(Chlorophyll))%>%
+  mutate(sd.chla = sd(Chlorophyll))
+
+#############
+# Chlorophyll a panel:
+Fig2c <- ggplot(data=hydro.months,aes(x=DateTime,y=Chlorophyll))+
+  geom_line(data=hydro.months[hydro.months$month=='Aug-Sept',],aes(y=mean.chla,color=Site,alpha=0.25))+
+  geom_ribbon(data=hydro.months[hydro.months$month=='Aug-Sept',],aes(x=DateTime,ymin=mean.chla-sd.chla,ymax=mean.chla+sd.chla,fill=Site,alpha=0.1))+
+  geom_line(data=hydro.months[hydro.months$month=='Nov-May',],aes(y=mean.chla,color=Site,alpha=0.25))+
+  geom_ribbon(data=hydro.months[hydro.months$month=='Nov-May',],aes(x=DateTime,ymin=mean.chla-sd.chla,ymax=mean.chla+sd.chla,fill=Site,alpha=0.1))+
+  geom_jitter(aes(color=Site),width=1,size=1)+
+  scale_color_manual(values=c("blue","red"))+
+  scale_fill_manual(values=c("blue","red"))+
+  ylab("Chlorophyll a (µg/l)") +
+  xlab("Time")+
+  scale_x_date(breaks='months',date_labels = "%b-%y")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+#############
+
+#######
+# Flow
+
+# Read data & format to organize by site & time period
+flow <- read.csv("flow.csv")
+flow$DateTime <- as.Date(flow$DateTime, format = "%m/%d/%Y")
+
+month1 <- flow%>%# 
+  filter(DateTime < "0019-09-27")%>%
+  group_by(Site)%>%
+  mutate(month = "one")
+
+month3 <- flow%>%# 
+  filter(DateTime > "0019-09-27" & DateTime < "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "three")
+
+month9 <- flow%>%# 
+  filter(DateTime > "0019-11-15")%>%
+  group_by(Site)%>%
+  mutate(month = "nine")
+
+flow.all <- rbind(month1, month3, month9)
+
+flow.all$month=factor(flow.all$month, levels=c("one", "three", "nine"))
+levels(flow.all$month)[levels(flow.all$month)=="one"] <- "Aug-Sept"
+levels(flow.all$month)[levels(flow.all$month)=="three"] <- "Sept-Nov"
+levels(flow.all$month)[levels(flow.all$month)=="nine"] <- "Nov-May"
+
+flow.all$reef=factor(flow.all$Site, levels=c("butler", "pellicer"))
+levels(flow.all$Site)[levels(flow.all$Site)=="butler"] <- "Butler"
+levels(flow.all$Site)[levels(flow.all$Site)=="pellicer"] <- "Pellicer"
+
+# Summary statistics
+flow.all <- flow.all %>%
+  group_by(Site,month)%>%
+  mutate(mean.vel = mean(speed))%>%
+  mutate(sd.vel = sd(speed))
+
+#############
+# Flow velocity figure panel:
+Fig2d <- ggplot(data=flow.all,aes(x=DateTime,y=speed))+
+  geom_line(data=flow.all[flow.all$month=='Aug-Sept',],aes(y=mean.vel,color=Site,alpha=0.25))+
+  geom_ribbon(data=flow.all[flow.all$month=='Aug-Sept',],aes(x=DateTime,ymin=mean.vel-sd.vel,ymax=mean.vel+sd.vel,fill=Site,alpha=0.1))+
+  geom_line(data=flow.all[flow.all$month=='Nov-May',],aes(y=mean.vel,color=Site,alpha=0.25))+
+  geom_ribbon(data=flow.all[flow.all$month=='Nov-May',],aes(x=DateTime,ymin=mean.vel-sd.vel,ymax=mean.vel+sd.vel,fill=Site,alpha=0.1))+
+  geom_point(aes(color=Site),size=0.2)+
+  scale_color_manual(values=c("blue","red"))+
+  scale_fill_manual(values=c("blue","red"))+
+  ylab("Current velocity (m/s)") +
+  xlab("Time")+
+  scale_x_date(breaks='months',date_labels = "%b-%y")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+#############
+
+############
+# Tidal Exposure
+expose=read.csv("expose.csv")
+
+#fix the dates
+expose$DateTime<-as.Date(expose$DateTime, format = "%m/%d/%Y")
+
+#add column for the three observations periods
+
+expose$month<-''
+
+#period one is beginning to 27 SEP 19
+#period two is 28 SEP 19 to 15 NOV 19
+#period three is 16 NOV 19 to end
+
+#get the number counts for Site and period
+expose2=expose%>%
+mutate(month= ifelse(DateTime <= "0019-09-27","Aug-Sept", month ))%>%
+  mutate(month = ifelse(DateTime >= "0019-09-28" & DateTime <= "0019-11-15","Sept-Nov", month ))%>%
+  mutate(month  = ifelse(DateTime >= "0019-11-16","Nov-May", month ))%>%
+  group_by(Site,DateTime)%>%
+  mutate(exp=mean(Exposure=='Exposed')) #%>%
+ # select(-n)
+
+# Summary statistics
+expose2 <- expose2 %>%
+  group_by(Site,month)%>%
+  mutate(mean.exp = mean(exp))%>%
+  mutate(sd.exp = sd(exp))
+
+#############
+# Tidal exposure figure panel:
+Fig2e <- ggplot(data=expose2,aes(x=DateTime,y=exp))+
+  geom_line(data=expose2[expose2$month=='Aug-Sept',],aes(y=mean.exp,color=Site,alpha=0.25))+
+  geom_ribbon(data=expose2[expose2$month=='Aug-Sept',],aes(x=DateTime,ymin=mean.exp-sd.exp,ymax=mean.exp+sd.exp,fill=Site,alpha=0.1))+
+  geom_line(data=expose2[expose2$month=='Nov-May',],aes(y=mean.exp,color=Site,alpha=0.25))+
+  geom_ribbon(data=expose2[expose2$month=='Nov-May',],aes(x=DateTime,ymin=mean.exp-sd.exp,ymax=mean.exp+sd.exp,fill=Site,alpha=0.1))+
+  geom_point(aes(color=Site),size=0.2)+
+  scale_color_manual(values=c("blue","red"))+
+  scale_fill_manual(values=c("blue","red"))+
+  ylab("Proportion of time exposed to air") +
+  xlab("Time")+
+  scale_x_date(breaks='months',date_labels = "%b-%y")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+#############
+
+############
+# Predator data
+
+# Load size distribution surveys are in predators.csv 
+preds <- read_csv('predators.csv',locale=locale(tz='Canada/Eastern'))
+
+# harmonize naming conventions
+preds$organism.type[preds$organism.type=='conch.low']<-'conch'
+
+# Collect just the sites & predators we need
+preds <- preds %>%
+  filter(nerr.zone == 'butler' | nerr.zone == 'pellicer') %>%
+  filter(organism.type == 'mudcrab' | organism.type == 'conch' ) %>%
+  mutate(site = as.factor(nerr.zone))
+
+levels(preds$site)[levels(preds$site)=="butler"] <- "Lower"
+levels(preds$site)[levels(preds$site)=="pellicer"] <- "Upper"
+
+
+######
+# Predator size distribution figure panel
+Fig2f <- ggplot(data=preds,aes(x=size,color=site))+
+  geom_density(aes(color=site,linetype=organism.type))+
+  scale_color_manual(values=c("blue","red"))+
+  scale_linetype_manual(values=c("dashed","solid"))+
+  ylab("Probability density") +
+  xlab("Length (mm)")+
+  ylim(c(0,0.12))+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+#####
+
+
+#### Predator densities
+pred = read.csv("pred.density.clean.csv")
+pred$predator=factor(pred$predator, levels=c("crab", "conch"))
+levels(pred$predator)[levels(pred$predator)=="crab"] <- "Mud crab"
+levels(pred$predator)[levels(pred$predator)=="conch"] <- "Crown conch"
+
+######
+# Predator density inset panel:
+ fig2fi <-ggplot(data=pred,
+                mapping = aes(x=predator, 
+                              y = density)) +
+   geom_boxplot(aes(fill=nerr.zone),outlier.shape = NA,alpha=0.5)+
+   scale_fill_manual(values=c("blue", "red"), 
+                     name=NULL, labels=c("Lower", "Upper"))+
+   ylab("Density (individuals/0.25 m2)") +
+   xlab("Predator identity")+
+   ylim(0,15)+
+   #ylim(0,1)+ # This removes about 75 data points that are probably outliers
+   theme_classic(base_size = 16) +
+   theme(
+     strip.background = element_blank(),
+     strip.text.x = element_blank(),
+     strip.text.y = element_blank()) +
+   theme(legend.position = "none")
+
+
+######
+# aggregate into grid:
+
+FigW=10;FigH=15
+Fname='Fig2'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+grid.arrange(Fig2a, Fig2b, Fig2c, Fig2d, Fig2e, Fig2f, ncol = 2)
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+# Inset plot
+FigW=2;FigH=2
+Fname='Fig2inset'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig2fi
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+Month 1 analyses: Survival, growth, and shell+mass traits
+
+```{r}
+# MONTH 1 SURVIVAL ####
+# Read in datasets
+surv.data <- read.csv("reciprocal_survival.csv")
+
+# Format to convert coded data to alive/dead for binomial analysis
+surv1 <- surv.data %>%
+  filter(month.checked == "one" & status != 2) %>%# live = 2 means unit is missing
+  # If do ANOVA, then drop "post" from group_by and change dead to be out of 9 individuals
+  group_by(reef, meter, treatment, spat.source, home.away, month.checked)%>%
+  summarise(live =sum(status))%>%
+  mutate(dead = 9-live, survival = live/9)
+
+# GLM on survival
+model.surv1 = glm(cbind(live,dead)~reef*spat.source*treatment, data = surv1, family = "binomial")
+Anova(model.surv1)
+
+
+```
+
+```{r}
+##@###
+# Survival - Fig 3a
+
+# data frame with combined columns
+surv1p <-unite(data=surv1,col=source_treat, c("spat.source", "treatment")) 
+
+  
+surv1p$reef=factor(surv1$reef, levels=c("butler", "pellicer"))
+levels(surv1p$reef)[levels(surv1p$reef)=="butler"] <- "Lower"
+levels(surv1p$reef)[levels(surv1p$reef)=="pellicer"] <- "Upper"
+
+surv1p$source_treat=factor(surv1p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(surv1p$source_treat)[levels(surv1p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(surv1p$source_treat)[levels(surv1p$source_treat)=="butler_control"] <- "Lower control"
+levels(surv1p$source_treat)[levels(surv1p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(surv1p$source_treat)[levels(surv1p$source_treat)=="pellicer_control"] <- "Upper control"
+
+
+# Plot of growth at month
+fig3a <-ggplot(data=surv1p,
+               mapping = aes(x=source_treat, 
+                             y = survival)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Survival (proportional)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig3a'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig3a
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+```
+
+```{r}
+# MONTH 1 GROWTH ####
+grow.data <- read.csv("reciprocal_growth.csv")
+
+grow.start <- grow.data %>%
+  filter(month.checked == "initial")%>%
+  group_by(reef, meter, treatment, spat.source)%>%
+  summarise(length =mean(size))
+
+# Check initial sizes to see if any differences
+# because lengths were averaged to level of replicate, use ANOVA
+model.size.start = aov(length~treatment*spat.source*reef, data = grow.start)
+anova(model.size.start)
+
+shapiro.test(model.size.start$residuals)
+#data:  model.size.start$residuals
+#W = 0.97465, p-value = 0.4983
+
+leveneTest(model.size.start)
+#Levene's Test for Homogeneity of Variance (center = median)
+#      Df F value Pr(>F)
+#group  7  0.4025 0.8936
+#      32               
+
+
+grow1 <- grow.data %>%
+  filter(month.checked == "one")%>%
+  group_by(reef, treatment, meter, spat.source)%>%
+  summarise(length =mean(size))
+
+# Analyze growth increments at month 1 
+diff1 <- grow.data %>%
+  filter(month.checked == "one")%>%
+  group_by(reef, treatment, meter, spat.source)%>%
+  summarise(increment =mean(diff))     
+
+
+model.diff1 = aov(increment~treatment*spat.source*reef, data = diff1)
+anova(model.diff1) 
+# Appear to have lost a replicate possibly due to shipping or lab work error
+
+  
+shapiro.test(model.diff1$residuals)
+#data:  model.diff1$residuals
+#W = 0.98632, p-value = 0.9087
+
+leveneTest(model.diff1)
+#Df F value Pr(>F)
+#group  7  1.1517  0.358
+#31    
+```
+
+```{r}
+#####
+# Figure 3b (1 month growth rate)
+
+# Create a new data frame for plotting
+diff1p <- unite(diff1,source_treat, c("spat.source", "treatment"))
+
+diff1p$reef=factor(diff1p$reef, levels=c("butler", "pellicer"))
+levels(diff1p$reef)[levels(diff1p$reef)=="butler"] <- "Lower"
+levels(diff1p$reef)[levels(diff1p$reef)=="pellicer"] <- "Upper"
+
+diff1p$source_treat=factor(diff1p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(diff1p$source_treat)[levels(diff1p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(diff1p$source_treat)[levels(diff1p$source_treat)=="butler_control"] <- "Lower control"
+levels(diff1p$source_treat)[levels(diff1p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(diff1p$source_treat)[levels(diff1p$source_treat)=="pellicer_control"] <- "Upper control"
+
+
+# Plot of growth increment at month 1
+fig3b <-ggplot(data=diff1p,
+               mapping = aes(x=source_treat, 
+                             y = increment)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Growth increment (mm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig3b'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig3b
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+```
+
+```{r}
+####################
+# MONTH 1 TRAITS ####
+trait.data <- read.csv("reciprocal_traits_edited.csv")
+
+trait1 <- trait.data %>%
+  filter(month.checked == "one")%>% 
+  group_by(meter, treatment, spat.source, reef, oyster.ID)%>%
+  # Changed the response to have trait corrected for by shell length 
+  summarise(tissue =mean(std.tissue), shell.wt = mean(std.wt), shell.thick = mean(std.thick))   
+
+  
+
+model.tissue1 = aov(tissue~ reef*treatment*spat.source, data = trait1)
+anova(model.tissue1)
+           
+ 
+shapiro.test(model.tissue1$residuals)
+#data:  model.tissue1$residuals
+#W = 0.97689, p-value = 0.5913
+
+leveneTest(model.tissue1)
+#Df F value Pr(>F)
+#group  7  1.1375 0.3659
+#31             
+
+TukeyHSD(model.tissue1)
+# None of the simple effects comparisons according to interaction are significant
+```
+
+```{r}
+#####
+# Figure 4b (tissue mass)
+
+trait1p<-unite(trait1,source_treat, c("spat.source", "treatment"))
+
+trait1p$reef=factor(trait1$reef, levels=c("butler", "pellicer"))
+levels(trait1p$reef)[levels(trait1p$reef)=="butler"] <- "Lower"
+levels(trait1p$reef)[levels(trait1p$reef)=="pellicer"] <- "Upper"
+
+trait1p$source_treat=factor(trait1p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(trait1p$source_treat)[levels(trait1p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(trait1p$source_treat)[levels(trait1p$source_treat)=="butler_control"] <- "Lower control"
+levels(trait1p$source_treat)[levels(trait1p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(trait1p$source_treat)[levels(trait1p$source_treat)=="pellicer_control"] <- "Upper control"
+
+fig4b <-ggplot(data=trait1p,
+                mapping = aes(x=source_treat, 
+                              y = tissue)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005, shape =21) +
+  ylab("Tissue mass (g)\nShell length (cm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+
+FigW=7;FigH=4
+Fname='Fig4b'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig4b
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+#mean in group cage mean in group control 
+#0.03508333            0.02034615 
+# only meaningful is difference between butler cage at butler and its control and then the main effect of treatment...
+```
+
+```{r}
+# Shell mass analysis
+model.shell.wt1 = aov(shell.wt~ reef*treatment*spat.source, data = trait1)
+anova(model.shell.wt1)
+
+#Response: shell.wt
+#Df     Sum Sq    Mean Sq F value  Pr(>F)  
+#reef                        1 0.00003272 3.2724e-05  1.0545 0.31241  
+#treatment                   1 0.00006783 6.7835e-05  2.1860 0.14936  
+##spat.source                 1 0.00002187 2.1873e-05  0.7049 0.40758  
+#reef:treatment              1 0.00001966 1.9662e-05  0.6336 0.43209  
+#reef:spat.source            1 0.00000681 6.8050e-06  0.2193 0.64285  
+#treatment:spat.source       1 0.00003329 3.3293e-05  1.0729 0.30831  
+#reef:treatment:spat.source  1 0.00010290 1.0290e-04  3.3160 0.07827 .
+#Residuals                  31 0.00096197 3.1031e-05      
+
+shapiro.test(model.shell.wt1$residuals)
+#data:  model.shell.wt1$residuals
+#W = 0.98805, p-value = 0.947
+
+leveneTest(model.shell.wt1)
+#Df F value Pr(>F)
+#group  7  1.1938 0.3352
+#31        
+
+TukeyHSD(model.shell.wt1)
+# This time, no significant difference between treatments
+# So going to exclude this one or just plot for treatment
+```
+
+```{r}
+####
+# Figure 4a (Shell mass - 1 month)
+
+fig4a<-ggplot(data=trait1p,
+              mapping = aes(x=source_treat, 
+                            y = shell.wt)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("B.cage", "P.cage"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Standardized shell mass (g/mm)") +
+  xlab("Deployment location")+
+  #ylim(0,60)+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+
+FigW=7;FigH=4
+Fname='Fig4a'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig4a
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+#model.shell.wt1a = t.test(shell.wt~ treatment, data = trait1, var.equal = TRUE)
+#ean in group cage mean in group control 
+#0.4319474             0.3136316 
+# 
+```
+
+```{r}
+# Shell thickness analysis
+model.shell.thick1 = aov(shell.thick~ reef*treatment*spat.source, data = trait1)
+anova(model.shell.thick1)
+
+#Response: shell.thick
+#Df    Sum Sq    Mean Sq F value  Pr(>F)  
+#reef                        1 0.0004271 0.00042713  1.0202 0.32029  
+#treatment                   1 0.0020968 0.00209683  5.0083 0.03255 *
+#  spat.source                 1 0.0000785 0.00007852  0.1876 0.66796  
+#reef:treatment              1 0.0000207 0.00002068  0.0494 0.82558  
+#reef:spat.source            1 0.0004173 0.00041729  0.9967 0.32583  
+#treatment:spat.source       1 0.0017048 0.00170485  4.0721 0.05232 .
+#reef:treatment:spat.source  1 0.0000197 0.00001973  0.0471 0.82957  
+#Residuals                  31 0.0129786 0.00041867   
+
+shapiro.test(model.shell.thick1$residuals)
+#data:  model.shell.thick1$residuals
+#W = 0.977, p-value = 0.5951
+
+# close to having issue with variances
+leveneTest(model.shell.thick1)
+#Df F value  Pr(>F)  
+#group  7   1.998 0.08744 .
+#31                  
+
+TukeyHSD(model.shell.thick1)
+#Mainly the control pellicer vs cage pellicer at both sites (p = 0.027)
+```
+
+    
+
+```{r}
+#####
+# Figure 4c (Shell thickness, 1 month)
+
+fig4c<-ggplot(data=trait1p,
+              mapping = aes(x=source_treat, 
+                            y = shell.thick)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("B.cage", "P.cage"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Shell thickness (mm)/\nshell length (mm)") +
+  xlab("Deployment location")+
+  #ylim(0,60)+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig4c'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig4c
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+
+
+```{r}
+# Analyses of data after 9 months
+# MONTH 9 SURVIVAL ####
+
+surv9 <- surv.data %>%
+  filter(month.checked == "nine" & status != 2) %>%# live = 2 means unit is missing
+  group_by(reef, treatment, meter, spat.source, home.away, month.checked)%>%
+  summarise(live =sum(status))%>%
+  mutate(dead = 9-live, survival = live/9)   #%>%
+
+
+  surv9$m <- c(1:34) # meter increment where sampling occurred
+  surv9$spat.source = as.factor(surv9$spat.source)
+  
+# Binomial GLM 
+model.surv9 = glm(cbind(live,dead)~reef*spat.source*treatment, data = surv9, family = "binomial")
+Anova(model.surv9)
+
+# Use GLHT bc Tukey can't handle GLM output. First create a joined dataframe
+surv9a <-  unite(surv9,reef_treat, c("reef", "treatment"))
+surv9a$reef_treat <- as.factor(surv9a$reef_treat)
+surv9a$spat.source <- as.factor(surv9a$spat.source)
+surv9a$proportion = surv9a$live/(surv9a$live+surv9a$dead)
+# GLHT has difficulty with binomial responses so coerce to running on the proportional value
+model.surv9a = glm(proportion~spat.source+reef_treat, data = surv9a, family = "binomial")
+
+summary(glht(aov(model.surv9a),linfct=mcp("reef_treat"='Tukey',interaction_average = TRUE)))
+```
+ 
+ 
+```{r}
+#####
+# Fig 5a - 9-month survival
+
+surv9p <-  unite(surv9,source_treat, c("spat.source", "treatment"))
+
+surv9p$reef=factor(surv9p$reef, levels=c("butler", "pellicer"))
+levels(surv9p$reef)[levels(surv9p$reef)=="butler"] <- "Lower"
+levels(surv9p$reef)[levels(surv9p$reef)=="pellicer"] <- "Upper"
+
+surv9p$source_treat=factor(surv9p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(surv9p$source_treat)[levels(surv9p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(surv9p$source_treat)[levels(surv9p$source_treat)=="butler_control"] <- "Lower control"
+levels(surv9p$source_treat)[levels(surv9p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(surv9p$source_treat)[levels(surv9p$source_treat)=="pellicer_control"] <- "Upper control"
+
+
+fig5a <-ggplot(data=surv9p,
+               mapping = aes(x=source_treat, 
+                             y = survival)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Survival (proportional)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig5a'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig5a
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+```{r}
+# MONTH 9 GROWTH ####
+
+grow9 <- grow.data %>%
+  filter(month.checked == "nine")%>%
+  group_by(reef, treatment, meter, spat.source)%>%
+  summarise(length =mean(size)) 
+ 
+
+# Analyze growth as difference between 9 month and length at deployment
+diff9 <- grow.data %>%
+  filter(month.checked == "nine")%>%
+  group_by(reef, treatment, meter, spat.source)%>%
+  summarise(increment =mean(diff))    # %>%
+
+
+model.diff9 = aov(increment~treatment*spat.source*reef, data = diff9)
+anova(model.diff9)
+  
+
+#Response: increment
+#Df  Sum Sq Mean Sq F value  Pr(>F)  
+#treatment                   1  133.26 133.261  1.7414 0.20674  
+#spat.source                 1  116.42 116.417  1.5213 0.23640  
+#reef                        1  180.01 180.009  2.3524 0.14591  
+#treatment:spat.source       1   27.51  27.508  0.3595 0.55775  
+#treatment:reef              1   87.79  87.787  1.1472 0.30107  
+#spat.source:reef            1  313.71 313.710  4.0995 0.06108 .
+#treatment:spat.source:reef  1  100.63 100.627  1.3150 0.26946  
+#Residuals                  15 1147.85  76.523 
+
+shapiro.test(model.diff9$residuals)
+#data:  model.diff9$residuals
+#W = 0.95576, p-value = 0.3833
+
+leveneTest(model.diff9)
+#Df F value Pr(>F)
+#group  7  0.4266 0.8707
+#15   
+```
+
+
+```{r}
+######
+# Fig 5b - 9-month growth
+diff9p <-  unite(diff9,source_treat, c("spat.source", "treatment"))
+
+diff9p$reef=factor(diff9p$reef, levels=c("butler", "pellicer"))
+levels(diff9p$reef)[levels(diff9p$reef)=="butler"] <- "Butler"
+levels(diff9p$reef)[levels(diff9p$reef)=="pellicer"] <- "Pellicer"
+
+diff9$source_treat=factor(diff9p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(diff9p$source_treat)[levels(diff9p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(diff9p$source_treat)[levels(diff9p$source_treat)=="butler_control"] <- "Lower control"
+levels(diff9p$source_treat)[levels(diff9p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(diff9p$source_treat)[levels(diff9p$source_treat)=="pellicer_control"] <- "Upper control"
+
+
+fig5b <-ggplot(data=diff9p,
+                mapping = aes(x=source_treat, 
+                              y = increment)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape = 21) +
+  ylab("Growth increment (mm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig5b'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig5b
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+#fig7i = grid.arrange(fig7a, fig7bi, ncol = 1)
+
+```
+
+```{r}
+# MONTH 9 TRAITS ####
+# Tissue mass:
+trait9 <- trait.data %>%
+  filter(month.checked == "nine")%>% 
+  group_by(meter, treatment, spat.source, reef, oyster.ID)%>%
+  summarise(tissue =mean(std.tissue), shell.wt = mean(std.wt), shell.thick = mean(std.thick)) 
+  
+  
+model.tissue9 = aov(tissue~ reef*treatment*spat.source, data = trait9)
+anova(model.tissue9)
+
+#Response: tissue
+#Df     Sum Sq    Mean Sq F value  Pr(>F)  
+#reef                        1 3.9060e-06 3.9058e-06  1.6469 0.21406  
+#treatment                   1 9.2400e-06 9.2402e-06  3.8961 0.06237 .
+#spat.source                 1 7.3000e-08 7.3300e-08  0.0309 0.86220  
+#reef:treatment              1 6.6810e-06 6.6810e-06  2.8170 0.10883  
+#reef:spat.source            1 5.3230e-06 5.3234e-06  2.2446 0.14970  
+#treatment:spat.source       1 3.1220e-06 3.1221e-06  1.3164 0.26477  
+#reef:treatment:spat.source  1 2.0000e-09 2.0000e-09  0.0008 0.97717  
+#Residuals                  20 4.7433e-05 2.3716e-06    
+
+
+shapiro.test(model.tissue9$residuals)
+#data:  model.tissue9$residuals
+#W = 0.96218, p-value = 0.3922
+
+leveneTest(model.tissue9)
+#Df F value Pr(>F)
+#group  7   0.895 0.5289
+#20   
+```
+
+
+```{r}
+####
+# Figure 6b: Tissue mass - 9 month
+
+trait9p <- unite(trait9,source_treat, c("spat.source", "treatment"))
+
+trait9p$reef=factor(trait9p$reef, levels=c("butler", "pellicer"))
+levels(trait9p$reef)[levels(trait9p$reef)=="butler"] <- "Butler"
+levels(trait9p$reef)[levels(trait9p$reef)=="pellicer"] <- "Pellicer"
+
+trait9p$source_treat=factor(trait9p$source_treat, levels=c("butler_cage", "butler_control", "pellicer_cage", "pellicer_control"))
+levels(trait9p$source_treat)[levels(trait9p$source_treat)=="butler_cage"] <- "Lower cage"
+levels(trait9p$source_treat)[levels(trait9p$source_treat)=="butler_control"] <- "Lower control"
+levels(trait9p$source_treat)[levels(trait9p$source_treat)=="pellicer_cage"] <- "Upper cage"
+levels(trait9p$source_treat)[levels(trait9p$source_treat)=="pellicer_control"] <- "Upper control"
+
+
+fig6b <-ggplot(data=trait9p,
+               mapping = aes(x=source_treat, 
+                             y = tissue)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Standardized tissue mass (g/mm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig6b'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig6b
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+```{r}
+# 9-month shell mass
+
+model.shell.wt9 = aov(shell.wt~ reef*treatment*spat.source, data = trait9)
+anova(model.shell.wt9)
+
+#Response: shell.wt
+#Df    Sum Sq    Mean Sq F value Pr(>F)
+#reef                        1 0.0000039 0.00000394  0.0089 0.9259
+#treatment                   1 0.0010023 0.00100225  2.2578 0.1486
+#spat.source                 1 0.0000074 0.00000742  0.0167 0.8984
+#reef:treatment              1 0.0005505 0.00055051  1.2401 0.2787
+#reef:spat.source            1 0.0006371 0.00063706  1.4351 0.2449
+#treatment:spat.source       1 0.0001708 0.00017076  0.3847 0.5421
+#reef:treatment:spat.source  1 0.0000083 0.00000827  0.0186 0.8928
+#Residuals                  20 0.0088783 0.00044392 
+
+#Nothing
+
+shapiro.test(model.shell.wt9$residuals)
+#data:  model.shell.wt9$residuals
+#W = 0.96777, p-value = 0.5223
+
+leveneTest(model.shell.wt9)
+#Df F value Pr(>F)
+#group  7  1.4726  0.233
+#20        
+
+```
+
+
+```{r}
+#####
+# Fig 6a: Shell mass - 9 months
+
+fig6a <-ggplot(data=trait9p,
+               mapping = aes(x=source_treat, 
+                             y = shell.wt)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape=21) +
+  ylab("Shell mass (g)/\nShell length (cm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig6a'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig6a
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+```{r}
+# Shell thickness - 9 months
+
+model.shell.thick9 = aov(shell.thick~ reef*treatment*spat.source, data = trait9)
+anova(model.shell.thick9)
+
+#Response: shell.thick
+#Df     Sum Sq    Mean Sq F value Pr(>F)   
+#reef                        1 0.00027006 0.00027006  2.1080 0.1620   
+#treatment                   1 0.00141386 0.00141386 11.0360 0.0034 **
+#  spat.source                 1 0.00021988 0.00021988  1.7163 0.2050   
+#reef:treatment              1 0.00000706 0.00000706  0.0551 0.8168   
+#reef:spat.source            1 0.00000006 0.00000006  0.0005 0.9823   
+#treatment:spat.source       1 0.00011383 0.00011383  0.8885 0.3571   
+#reef:treatment:spat.source  1 0.00000045 0.00000045  0.0035 0.9534   
+#Residuals                  20 0.00256228 0.00012811    
+
+shapiro.test(model.shell.thick9$residuals)
+#data:  model.shell.thick9$residuals
+#W = 0.95518, p-value = 0.2666
+
+leveneTest(model.shell.thick9)
+#Df F value Pr(>F)
+#group  7  1.0588 0.4241
+#20   
+```
+
+```{r}
+##### 
+# Figure 6c, shell thickness - 9 months
+
+fig6c <-ggplot(data=trait9p,
+               mapping = aes(x=source_treat, 
+                             y = shell.thick)) +
+  facet_grid(cols=vars(reef)) +
+  geom_boxplot(aes(fill=source_treat),outlier.shape = NA,alpha=0.5)+
+  scale_fill_manual(values=c("dark blue", "blue", "dark red", "red"), 
+                    name=NULL, labels=c("Cage", "Control"))+
+  geom_jitter(color='black',width=0.1,size=3,height=0.0005,shape =21) +
+  ylab("Shell thickness (cm)/\nShell length (cm)") +
+  xlab("Deployment site")+
+  theme_classic(base_size = 16) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank()) +
+  theme(legend.position = "none")
+
+FigW=7;FigH=4
+Fname='Fig6c'
+# Creating and saving plot
+switch(Sys.info()[['sysname']],
+       Windows= {windows(width=FigW,height=FigH)},
+       Darwin = {quartz(width=FigW,height=FigH)},
+       Linux = {x11(width=FigW,height=FigH)})
+fig6c
+File.name = paste("figures/",Fname,'.eps',sep="")
+dev.print(device=pdf,file=File.name,useDingbats=FALSE)
+
+```
+
+
